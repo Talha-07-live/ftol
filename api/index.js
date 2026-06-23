@@ -1,21 +1,22 @@
 const BOT_TOKEN = "5941791142:AAFFeBSWyzt5AlnM0yQH6u3bVmyzldyYDRk";
 
 export default async function handler(req, res) {
-  // CORS এবং মেথড প্রটেকশন
+  // CORS হেডারস সেটআপ
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { file_id } = req.query;
+  // URL থেকে কুয়েরি প্যারামিটার নেওয়া
+  const { id } = req.query;
   const currentDomain = `https://${req.headers.host}`;
 
-  // 🎯 লজিক ১: ফাইল ডাউনলোডের মেইন ইঞ্জিন (GET Request)
-  if (file_id && req.method === "GET") {
+  // 🎯 ১. ফাইল ডাউনলোডের মেইন ইঞ্জিন (GET Request)
+  if (id && req.method === "GET") {
     try {
-      // টেলিগ্রাম থেকে ফাইলের তাজা লাইভ পাথ তুলে আনা
-      const getFileUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${file_id}`;
+      // টেলিগ্রাম থেকে ফাইলের লাইভ পাথ তুলে আনা
+      const getFileUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${id}`;
       const fileRes = await fetch(getFileUrl);
       const fileData = await fileRes.json();
 
@@ -24,11 +25,9 @@ export default async function handler(req, res) {
       }
 
       const filePath = fileData.result.file_path;
-      // ৪ জিবি বাইপাস করার জন্য সরাসরি টেলিগ্রাম সিডিএন লিংক তৈরি
       const telegramDirectLink = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-      // ব্রাউজারকে সরাসরি টেলিগ্রামের হাই-স্পিড ডাউনলোড লিংকে রিডাইরেক্ট করা
-      // এর ফলে Vercel-এর ৫০MB লিমিট খাটবে না এবং আনলিমিটেড সাইজের ফাইল ডাউনলোড হবে
+      // ৪ জিবি বাইপাস ট্রিক: সরাসরি টেলিগ্রামের সিডিএন সার্ভারে রিডাইরেক্ট
       res.writeHead(302, { Location: telegramDirectLink });
       return res.end();
 
@@ -37,7 +36,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // 🎯 লজিক ২: টেলিগ্রাম বটের মেসেজ ও নাম ফিল্টারিং ইঞ্জিন (POST Request)
+  // 🎯 ২. টেলিগ্রাম বটের মেসেজ ও নাম ফিল্টারিং ইঞ্জিন (POST Request)
   if (req.method === "POST") {
     try {
       const payload = req.body;
@@ -47,7 +46,7 @@ export default async function handler(req, res) {
         const userText = payload.message.text ? payload.message.text.trim() : "";
 
         if (userText === "/start") {
-          return sendMsg(chatId, "👋 তালহা ডাউনলোডারে আপনাকে স্বাগতম!\n\nআমাকে যেকোনো সাইজের (সর্বোচ্চ ৪ GB) ফাইল বা ভিডিও পাঠান। আমি সেটির নাম নিখুঁতভাবে পরিবর্তন করে একটি কাস্টম ছোট ডাউনলোড লিংক বানিয়ে দেব।");
+          return await sendMsg(chatId, "👋 তালহা ডাউনলোডারে আপনাকে স্বাগত!\n\nআমাকে যেকোনো সাইজের (সর্বোচ্চ ৪ GB) ফাইল বা ভিডিও পাঠান। আমি সেটির নাম নিখুঁতভাবে পরিবর্তন করে একটি কাস্টম ছোট ডাউনলোড লিংক বানিয়ে দেব।");
         }
 
         // ফাইল অথবা ভিডিও ডিটেক্ট করা
@@ -56,28 +55,22 @@ export default async function handler(req, res) {
           const fId = media.file_id;
           let originalName = media.file_name || (payload.message.video ? "video.mp4" : "file.bin");
 
-          // 🧼 সুপার ইন্টেলিজেন্ট নাম ক্লিনিং অ্যালগরিদম (Regex Engine)
-          // ১. ব্র্যাকেট এবং তার ভেতরের সব লেখা ডিলিট করা: যেমন [MyChannel] বা (SomeText)
-          let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, "");
-          
-          // ২. @ সাইন এবং তার পরের ইউজারনেম বা টেক্সট ডিলিট করা (যেমন @exp, @CoolBot)
-          cleanedName = cleanedName.replace(/@\w+/g, "");
-          
-          // ৩. ফাইলের নামের শুরুতে বা শেষে থাকা বাড়তি স্পেস বা ডট থাকলে তা পরিষ্কার করা
-          cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, "");
+          // 🧼 সুপার ইন্টেলিজেন্ট নাম ক্লিনিং অ্যালগরিদম (Regex)
+          let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, ""); // ব্র্যাকেট ডিলিট
+          cleanedName = cleanedName.replace(/@\w+/g, ""); // @exp ডিলিট
+          cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি স্পেস পরিষ্কার
 
-          // ৪. যদি সব কেটে যাওয়ার পর ফাইলের নাম একদম খালি হয়ে যায়, তবে একটি ডিফল্ট নাম দেওয়া
           if (!cleanedName || cleanedName === ".mp4" || cleanedName === ".mkv") {
             cleanedName = payload.message.video ? "video.mp4" : "file.bin";
           }
 
-          // ৫. চূড়ান্ত শোধন: শুরুতে ব্র্যান্ড ট্যাগ '[Talha]' যুক্ত করা
+          // শুরুতে ব্র্যান্ড ট্যাগ '[Talha]' যুক্ত করা
           const finalFileName = `[Talha] ${cleanedName}`;
 
-          // 🔗 আল্ট্রা-শর্ট এবং প্রিমিয়াম লুকিং ডাউনলোড লিঙ্ক জেনারেট
-          const shortDownloadLink = `${currentDomain}/talhasdownloader/${fId}`;
+          // 🔗 আল্ট্রা-শর্ট এবং প্রিমিয়াম লুকিং ডাউনলোড লিঙ্ক (শুধুমাত্র /api?id=...)
+          const shortDownloadLink = `${currentDomain}/api?id=${fId}`;
 
-          const replyText = `🚀 **আপনার ফাইল প্রসেসড!**\n\n📝 **নতুন নাম:** \`${finalFileName}\`\n\n📥 **হাই-স্পিড ডাউনলোড লিংক (৪ GB+ সমর্থিত):**\n${shortDownloadLink}\n\n*IDM বা যেকোনো ফাস্ট ডাউনলোডার ব্যবহার করতে পারেন।*`;
+          const replyText = `🚀 **আপনার ফাইল প্রসেসড!**\n\n📝 **নতুন নাম:** \`${finalFileName}\`\n\n📥 **হাই-স্পিড ডাউনলোড লিংক (৪ GB+ समर्थित):**\n${shortDownloadLink}`;
           
           await sendMsg(chatId, replyText);
         } else {
