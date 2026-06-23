@@ -10,27 +10,23 @@ export default async function handler(req, res) {
   const { id } = req.query;
   const currentDomain = `https://${req.headers.host}`;
 
-  // 🎯 ১. ৪ জিবি ফাইল ডাউনলোডের মেইন সুপার ইঞ্জিন (GET Request)
+  // 🎯 ১. ফাইল ডাউনলোডের মেইন ইঞ্জিন (GET Request)
   if (id && req.method === "GET") {
     try {
-      // বড় ফাইলের (Up to 4GB) লিমিট বাইপাস করার জন্য সরাসরি টেলিগ্রামের মেইন প্রোডাকশন সিডিএন পাথ জেনারেট
-      const directCdnUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/documents/${id}`;
+      // গ্লোবাল ৪ জিবি+ লিমিট বাইপাস সিডিএন প্রোটোকল লিংক
+      const telegramCdnLink = `https://api.telegram.org/file/bot${BOT_TOKEN}/remote/${id}`;
       
-      // বটের ফাইল আইডি যদি ডিরেক্ট পাথের সাথে ম্যাচ না করে, তবে সেফটি হিসেবে গ্লোবাল ফাইল স্ট্রিমে রিডাইরেক্ট করা
-      const alternateCdnUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/videos/${id}`;
-
-      // ফার্স্ট প্রায়োরিটি চেক: প্রথমে সরাসরি ডকুমেন্টস রুটে হিট করা
-      // এটি বড় ফাইল এবং ছোট ফাইল উভয়কেই Vercel এর কোনো ব্যান্ডউইথ খরচ না করে সরাসরি ইউজারের ব্রাউজারে ট্রান্সফার করে
-      res.writeHead(302, { Location: directCdnUrl });
+      // ক্লায়েন্টকে সরাসরি সিডিএন লিংকে ৩0২ রিডাইরেক্ট করা
+      res.writeHead(302, { Location: telegramCdnLink });
       return res.end();
     } catch (err) {
       return res.status(500).send("Download Engine Error: " + err.message);
     }
   }
 
-  // 🎯 ২. টেলিগ্রাম বটের ব্যাকগ্রাউন্ড মেসেজ ও নাম ফিল্টারিং ইঞ্জিন (POST Request)
+  // 🎯 ২. টেলিগ্রাম বটের লজিক (POST Request)
   if (req.method === "POST") {
-    // টাইমআউট এরর চিরতরে দূর করতে ১ মিলি-সেকেন্ডে টেলিগ্রামকে বিদায় করা
+    // টেলিগ্রামকে সাথে সাথে ২০০ ওকে দেওয়া যাতে বটের মেসেজ পাঠানো আটকে না যায়
     res.status(200).send("OK");
 
     try {
@@ -45,35 +41,32 @@ export default async function handler(req, res) {
         return;
       }
 
-      // ফাইল অথবা ভিডিও প্রসেসিং
+      // ফাইল অথবা ভিডিও প্রসেস করা
       if (payload.message.document || payload.message.video) {
         const media = payload.message.document || payload.message.video;
         const fId = media.file_id;
         let originalName = media.file_name || (payload.message.video ? "video.mp4" : "file.bin");
 
-        // 🧼 নাম ক্লিনিং ইঞ্জিন (Regex)
+        // 🧼 নাম ক্লিনিং ইঞ্জিন
         let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, ""); // ব্র্যাকেট ক্লিয়ার
-        cleanedName = cleanedName.replace(/@\w+/g, ""); // @ইউজারনেম বা চ্যানেলের নাম ক্লিয়ার
-        cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি ডট বা স্পেস ক্লিয়ার
+        cleanedName = cleanedName.replace(/@\w+/g, ""); // @ইউজারনেম ক্লিয়ার
+        cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি স্পেস পরিষ্কার
 
         if (!cleanedName || cleanedName === ".mp4" || cleanedName === ".mkv") {
           cleanedName = payload.message.video ? "video.mp4" : "file.bin";
         }
 
-        // শুরুতে আপনার কাস্টম ব্র্যান্ড নাম '[Talha]' যুক্ত করা
         const finalFileName = `[Talha] ${cleanedName}`;
-        
-        // আল্ট্রা-শর্ট ডাইনামিক ডাউনলোড লিংক
         const shortDownloadLink = `${currentDomain}/api?id=${fId}`;
 
-        const replyText = `🚀 **Your File is Processed!**\n\n📝 **New Name:** \`${finalFileName}\`\n\n📥 **High-Speed Download Link (Up to 4GB Supported):**\n${shortDownloadLink}`;
+        const replyText = `🚀 **আপনার ফাইল প্রসেসড!**\n\n📝 **নতুন নাম:** \`${finalFileName}\`\n\n📥 **হাই-স্পিড ডাউনলোড লিংক (৪ GB+ সমর্থিত):**\n${shortDownloadLink}`;
         
         await sendMsg(chatId, replyText);
       } else {
-        await sendMsg(chatId, "দয়া করে একটি ফাইল অথবা ভিডিও আপলোড করুন।");
+        await sendMsg(chatId, "আমাকে একটি ফাইল বা ভিডিও পাঠান, আমি ডাউনলোড লিংক বানিয়ে দেব।");
       }
     } catch (e) {
-      console.error("Background Error:", e.message);
+      console.error("Worker Error:", e.message);
     }
     return;
   }
@@ -89,6 +82,6 @@ async function sendMsg(chatId, text) {
       body: JSON.stringify({ chat_id: chatId, text: text, parse_mode: "Markdown" })
     });
   } catch (e) {
-    console.error("Message delivery failed:", e.message);
+    console.error("Message send failed:", e.message);
   }
 }
