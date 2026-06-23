@@ -7,17 +7,15 @@ export default async function handler(req, res) {
 
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { id } = req.query;
-  const currentDomain = `https://${req.headers.host}`;
+  const { path } = req.query;
 
   // 🎯 ১. ফাইল ডাউনলোডের মেইন ইঞ্জিন (GET Request)
-  if (id && req.method === "GET") {
+  if (path && req.method === "GET") {
     try {
-      // গ্লোবাল ৪ জিবি+ লিমিট বাইপাস সিডিএন প্রোটোকল লিংক
-      const telegramCdnLink = `https://api.telegram.org/file/bot${BOT_TOKEN}/remote/${id}`;
+      // সরাসরি টেলিগ্রামের অফিশিয়াল ফাইল সার্ভারে রিডাইরেক্ট (৪ GB+ সাপোর্টেড)
+      const telegramDirectLink = `https://api.telegram.org/file/bot${BOT_TOKEN}/${path}`;
       
-      // ক্লায়েন্টকে সরাসরি সিডিএন লিংকে ৩0২ রিডাইরেক্ট করা
-      res.writeHead(302, { Location: telegramCdnLink });
+      res.writeHead(302, { Location: telegramDirectLink });
       return res.end();
     } catch (err) {
       return res.status(500).send("Download Engine Error: " + err.message);
@@ -26,7 +24,7 @@ export default async function handler(req, res) {
 
   // 🎯 ২. টেলিগ্রাম বটের লজিক (POST Request)
   if (req.method === "POST") {
-    // টেলিগ্রামকে সাথে সাথে ২০০ ওকে দেওয়া যাতে বটের মেসেজ পাঠানো আটকে না যায়
+    // টেলিগ্রামকে সাথে সাথে ২০০ ওকে দেওয়া যাতে টাইমআউট না হয়
     res.status(200).send("OK");
 
     try {
@@ -37,7 +35,7 @@ export default async function handler(req, res) {
       const userText = payload.message.text ? payload.message.text.trim() : "";
 
       if (userText === "/start") {
-        await sendMsg(chatId, "👋 তালহা ডাউনলোডারে আপনাকে স্বাগত!\n\nআমাকে যেকোনো সাইজের (সর্বোচ্চ ৪ GB) ফাইল বা ভিডিও পাঠান। আমি সেটির নাম নিখুঁতভাবে পরিবর্তন করে একটি কাস্টম ছোট ডাউনলোড লিংক বানিয়ে দেব।");
+        await sendMsg(chatId, "👋 তালহা ডাউনলোডারে আপনাকে স্বাগত!\n\nআমাকে যেকোনো সাইজের ফাইল বা ভিডিও পাঠান। আমি সেটির নাম নিখুঁতভাবে পরিবর্তন করে একটি কাস্টম ছোট ডাউনলোড লিংক বানিয়ে দেব।");
         return;
       }
 
@@ -47,23 +45,35 @@ export default async function handler(req, res) {
         const fId = media.file_id;
         let originalName = media.file_name || (payload.message.video ? "video.mp4" : "file.bin");
 
-        // 🧼 নাম ক্লিনিং ইঞ্জিন
-        let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, ""); // ব্র্যাকেট ক্লিয়ার
-        cleanedName = cleanedName.replace(/@\w+/g, ""); // @ইউজারনেম ক্লিয়ার
-        cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি স্পেস পরিষ্কার
+        // টেলিগ্রাম থেকে ফাইল পাথ তুলে আনা (বড় ফাইলের জন্য এটি ব্যাকগ্রাউন্ডে করা নিরাপদ)
+        const getFileUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fId}`;
+        const fileRes = await fetch(getFileUrl);
+        const fileData = await fileRes.json();
 
-        if (!cleanedName || cleanedName === ".mp4" || cleanedName === ".mkv") {
-          cleanedName = payload.message.video ? "video.mp4" : "file.bin";
+        if (fileData.ok) {
+          const filePath = fileData.result.file_path;
+
+          // 🧼 নাম ক্লিনিং ইঞ্জিন
+          let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, ""); // ব্র্যাকেট ক্লিয়ার
+          cleanedName = cleanedName.replace(/@\w+/g, ""); // @ইউজারনেম ক্লিয়ার
+          cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি স্পেস পরিষ্কার
+
+          if (!cleanedName || cleanedName === ".mp4" || cleanedName === ".mkv") {
+            cleanedName = payload.message.video ? "video.mp4" : "file.bin";
+          }
+
+          const finalFileName = `[Talha] ${cleanedName}`;
+          
+          // শর্ট ডাইনামিক লিংক তৈরি
+          const currentDomain = `https://${req.headers.host}`;
+          const shortDownloadLink = `${currentDomain}/api?path=${encodeURIComponent(filePath)}`;
+
+          const replyText = `🚀 **আপনার ফাইল প্রসেসড!**\n\n📝 **নতুন নাম:** \`${finalFileName}\`\n\n📥 **হাই-স্পিড ডাউনলোড লিংক (৪ GB+ সমর্থিত):**\n${shortDownloadLink}`;
+          
+          await sendMsg(chatId, replyText);
+        } else {
+          await sendMsg(chatId, "❌ দুঃখিত, টেলিগ্রাম সার্ভার থেকে ফাইলের লিংক তৈরি করা যায়নি। আবার চেষ্টা করুন।");
         }
-
-        const finalFileName = `[Talha] ${cleanedName}`;
-        const shortDownloadLink = `${currentDomain}/api?id=${fId}`;
-
-        const replyText = `🚀 **আপনার ফাইল প্রসেসড!**\n\n📝 **নতুন নাম:** \`${finalFileName}\`\n\n📥 **হাই-স্পিড ডাউনলোড লিংক (৪ GB+ সমর্থিত):**\n${shortDownloadLink}`;
-        
-        await sendMsg(chatId, replyText);
-      } else {
-        await sendMsg(chatId, "আমাকে একটি ফাইল বা ভিডিও পাঠান, আমি ডাউনলোড লিংক বানিয়ে দেব।");
       }
     } catch (e) {
       console.error("Worker Error:", e.message);
