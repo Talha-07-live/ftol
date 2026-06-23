@@ -19,14 +19,13 @@ export default async function handler(request) {
 
   const url = new URL(request.url);
   const fileId = url.searchParams.get("file_id");
-  // বটের মাধ্যমে আসল ফাইলের নাম কুয়েরি প্যারামিটারে পাস করলে সেটি ক্যাচ করবে (ঐচ্ছিক)
   const customFileName = url.searchParams.get("name"); 
 
   if (!fileId) {
     return new Response("Error: Missing file_id parameter", { status: 400, headers: CORS_HEADERS });
   }
 
-  // 🔒 আপনার BotFather থেকে পাওয়া আসল টোকেনটি এখানে দিন
+  // 🔒 আপনার দেওয়া লাইভ বট টোকেন
   const BOT_TOKEN = "5941791142:AAFFeBSWyzt5AlnM0yQH6u3bVmyzldyYDRk";
 
   try {
@@ -59,7 +58,7 @@ export default async function handler(request) {
       return new Response("Error: Unable to fetch stream from Telegram source", { status: fileResponse.status, headers: CORS_HEADERS });
     }
 
-    // ⚠️ Vercel Edge 50MB লিমিট প্রোটেকশন গার্ড (বড় ফাইলের ক্ষেত্রে এরর হ্যান্ডলিং)
+    // Vercel Edge 50MB লিমিট প্রোটেকশন গার্ড
     const contentLength = fileResponse.headers.get("content-length");
     if (contentLength && parseInt(contentLength) > 50 * 1024 * 1024 && !rangeHeader) {
       return new Response("Error: File exceeds Vercel 50MB Edge Limit. Use a download manager that requests chunks.", { status: 413, headers: CORS_HEADERS });
@@ -68,7 +67,6 @@ export default async function handler(request) {
     // ৫. রেসপন্স হেডার্স সেটআপ
     const responseHeaders = new Headers(CORS_HEADERS);
     
-    // কনটেন্ট টাইপ এবং রেঞ্জ হেডার পাস করা (ভিডিও ও অডিওর জন্য মাস্ট)
     responseHeaders.set("Content-Type", fileResponse.headers.get("content-type") || "application/octet-stream");
     
     if (fileResponse.headers.get("content-range")) {
@@ -78,16 +76,16 @@ export default async function handler(request) {
       responseHeaders.set("Content-Length", contentLength);
     }
 
-    // ফাইলের সুন্দর নাম সেট করা (ডাউনলোডের সময় হিজিবিজি নাম আসবে না)
+    // ফাইলের অরিজিনাল বা কাস্টম নাম সেট করা
     const finalFileName = customFileName ? encodeURIComponent(customFileName) : filePath.split('/').pop();
     responseHeaders.set("Content-Disposition", `attachment; filename="${finalFileName}"`);
     
-    // রাশ আওয়ার প্রুফ ক্যাশিং স্মার্ট টিউনিং (এজ নেটওয়ার্কে ১ ঘণ্টার জন্য লক থাকবে)
+    // রাশ আওয়ার প্রুফ ক্যাশ কন্ট্রোল
     responseHeaders.set("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=600");
 
-    // ৬. জিরো-মেমোরি ডেটা পাইপিং (Zero-Copy Transfer)
+    // ৬. জিরো-মেমোরি ডেটা পাইপিং
     return new Response(fileResponse.body, {
-      status: fileResponse.status, // এটি ২০০ কিংবা ২০৬ (Partial Content) দুইটাই অটো হ্যান্ডেল করবে
+      status: fileResponse.status,
       headers: responseHeaders
     });
 
