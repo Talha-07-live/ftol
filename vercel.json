@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/talhasdownloader/:file_id",
+      "destination": "/api/downloader?file_id=:file_id"
+    }
+  ]
+}
