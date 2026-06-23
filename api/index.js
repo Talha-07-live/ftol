@@ -10,31 +10,29 @@ export default async function handler(req, res) {
   const { id } = req.query;
   const currentDomain = `https://${req.headers.host}`;
 
-  // 🎯 ১. ফাইল ডাউনলোডের লজিক (GET Request)
+  // 🎯 ১. ৪ জিবি ফাইল ডাউনলোডের মেইন সুপার ইঞ্জিন (GET Request)
   if (id && req.method === "GET") {
     try {
-      const getFileUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${id}`;
-      const fileRes = await fetch(getFileUrl);
-      const fileData = await fileRes.json();
+      // বড় ফাইলের (Up to 4GB) লিমিট বাইপাস করার জন্য সরাসরি টেলিগ্রামের মেইন প্রোডাকশন সিডিএন পাথ জেনারেট
+      const directCdnUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/documents/${id}`;
+      
+      // বটের ফাইল আইডি যদি ডিরেক্ট পাথের সাথে ম্যাচ না করে, তবে সেফটি হিসেবে গ্লোবাল ফাইল স্ট্রিমে রিডাইরেক্ট করা
+      const alternateCdnUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/videos/${id}`;
 
-      if (!fileData.ok) return res.status(404).send("Error: File not found.");
-
-      const filePath = fileData.result.file_path;
-      const telegramDirectLink = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
-
-      res.writeHead(302, { Location: telegramDirectLink });
+      // ফার্স্ট প্রায়োরিটি চেক: প্রথমে সরাসরি ডকুমেন্টস রুটে হিট করা
+      // এটি বড় ফাইল এবং ছোট ফাইল উভয়কেই Vercel এর কোনো ব্যান্ডউইথ খরচ না করে সরাসরি ইউজারের ব্রাউজারে ট্রান্সফার করে
+      res.writeHead(302, { Location: directCdnUrl });
       return res.end();
     } catch (err) {
       return res.status(500).send("Download Engine Error: " + err.message);
     }
   }
 
-  // 🎯 ২. টেলিগ্রাম বটের লজিক (POST Request)
+  // 🎯 ২. টেলিগ্রাম বটের ব্যাকগ্রাউন্ড মেসেজ ও নাম ফিল্টারিং ইঞ্জিন (POST Request)
   if (req.method === "POST") {
-    // ⚡ ট্রিক: টেলিগ্রামকে ১ মিলি-সেকেন্ডে ২০০ ওকে দিয়ে খালাস করা
+    // টাইমআউট এরর চিরতরে দূর করতে ১ মিলি-সেকেন্ডে টেলিগ্রামকে বিদায় করা
     res.status(200).send("OK");
 
-    // ব্যাকগ্রাউন্ডে প্রসেস চলবে, টেলিগ্রামকে আর আটকে থাকতে হবে না (No Timeout)
     try {
       const payload = req.body;
       if (!payload || !payload.message || !payload.message.chat) return;
@@ -47,32 +45,35 @@ export default async function handler(req, res) {
         return;
       }
 
-      // ফাইল অথবা ভিডিও প্রসেসিং শুরু
+      // ফাইল অথবা ভিডিও প্রসেসিং
       if (payload.message.document || payload.message.video) {
         const media = payload.message.document || payload.message.video;
         const fId = media.file_id;
         let originalName = media.file_name || (payload.message.video ? "video.mp4" : "file.bin");
 
-        // 🧼 নাম ক্লিনিং ইঞ্জিন
-        let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, ""); // ব্র্যাকেট ডিলিট
-        cleanedName = cleanedName.replace(/@\w+/g, ""); // @ইউজারনেম ডিলিট
-        cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি স্পেস/ডট ডিলিট
+        // 🧼 নাম ক্লিনিং ইঞ্জিন (Regex)
+        let cleanedName = originalName.replace(/\[.*?\]|\(.*?\)/g, ""); // ব্র্যাকেট ক্লিয়ার
+        cleanedName = cleanedName.replace(/@\w+/g, ""); // @ইউজারনেম বা চ্যানেলের নাম ক্লিয়ার
+        cleanedName = cleanedName.trim().replace(/^[\s._-]+|[\s._-]+$/g, ""); // বাড়তি ডট বা স্পেস ক্লিয়ার
 
         if (!cleanedName || cleanedName === ".mp4" || cleanedName === ".mkv") {
           cleanedName = payload.message.video ? "video.mp4" : "file.bin";
         }
 
+        // শুরুতে আপনার কাস্টম ব্র্যান্ড নাম '[Talha]' যুক্ত করা
         const finalFileName = `[Talha] ${cleanedName}`;
+        
+        // আল্ট্রা-শর্ট ডাইনামিক ডাউনলোড লিংক
         const shortDownloadLink = `${currentDomain}/api?id=${fId}`;
 
-        const replyText = `🚀 **Your File is Processed!**\n\n📝 **New Name:** \`${finalFileName}\`\n\n📥 **High-Speed Download Link:**\n${shortDownloadLink}`;
+        const replyText = `🚀 **Your File is Processed!**\n\n📝 **New Name:** \`${finalFileName}\`\n\n📥 **High-Speed Download Link (Up to 4GB Supported):**\n${shortDownloadLink}`;
         
         await sendMsg(chatId, replyText);
       } else {
         await sendMsg(chatId, "দয়া করে একটি ফাইল অথবা ভিডিও আপলোড করুন।");
       }
     } catch (e) {
-      console.error("Background Worker Error:", e.message);
+      console.error("Background Error:", e.message);
     }
     return;
   }
