@@ -1,85 +1,82 @@
+// 🔒 আপনার টেলিগ্রাম বটের টোকেন
 const BOT_TOKEN = "5941791142:AAFFeBSWyzt5AlnM0yQH6u3bVmyzldyYDRk";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS, POST",
-  "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Range",
-  "Access-Control-Expose-Headers": "Content-Length, Content-Range, Content-Disposition",
-  "Access-Control-Max-Age": "86400"
-};
+export default async function handler(req, res) {
+  // CORS হেডারস সেট করা (Node.js style)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS, POST");
+  res.setHeader("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Range");
+  res.setHeader("Access-Control-Expose-Headers", "Content-Length, Content-Range, Content-Disposition");
 
-export default async function handler(request) {
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: CORS_HEADERS });
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
   }
 
-  const url = new URL(request.url);
-  const fileId = url.searchParams.get("file_id");
-  const currentDomain = `https://${url.host}`;
+  const { file_id, name } = req.query;
+  const currentDomain = `https://${req.headers.host}`;
 
   // 🎯 ১. ফাইল ডাউনলোডের লজিক (GET Request)
-  if (fileId && request.method === "GET") {
+  if (file_id && req.method === "GET") {
     try {
-      const customFileName = url.searchParams.get("name");
-      const getFileUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`;
+      const getFileUrl = `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${file_id}`;
       const fileRes = await fetch(getFileUrl);
       const fileData = await fileRes.json();
 
       if (!fileData.ok) {
-        return new Response("File not found on Telegram", { status: 404, headers: CORS_HEADERS });
+        return res.status(404).send("File not found on Telegram");
       }
 
       const filePath = fileData.result.file_path;
       const telegramDirectLink = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-      const forwardHeaders = new Headers();
-      const rangeHeader = request.headers.get("range");
-      if (rangeHeader) forwardHeaders.set("range", rangeHeader);
-      forwardHeaders.set("user-agent", "Mozilla/5.0");
+      // ক্লায়েন্টের হেডার ফরওয়ার্ড করা
+      const forwardHeaders = {};
+      if (req.headers.range) {
+        forwardHeaders["range"] = req.headers.range;
+      }
+      forwardHeaders["user-agent"] = "Mozilla/5.0";
 
       const fileResponse = await fetch(telegramDirectLink, { headers: forwardHeaders });
-      const responseHeaders = new Headers(CORS_HEADERS);
-      
-      responseHeaders.set("Content-Type", fileResponse.headers.get("content-type") || "application/octet-stream");
-      if (fileResponse.headers.get("content-range")) {
-        responseHeaders.set("Content-Range", fileResponse.headers.get("content-range"));
-      }
-      
-      const finalFileName = customFileName ? encodeURIComponent(customFileName) : filePath.split('/').pop();
-      responseHeaders.set("Content-Disposition", `attachment; filename="${finalFileName}"`);
-      responseHeaders.set("Cache-Control", "public, max-age=3600");
 
-      return new Response(fileResponse.body, { status: fileResponse.status, headers: responseHeaders });
+      // রেসপন্স হেডার সেট করা
+      res.setHeader("Content-Type", fileResponse.headers.get("content-type") || "application/octet-stream");
+      if (fileResponse.headers.get("content-range")) {
+        res.setHeader("Content-Range", fileResponse.headers.get("content-range"));
+      }
+      if (fileResponse.headers.get("content-length")) {
+        res.setHeader("Content-Length", fileResponse.headers.get("content-length"));
+      }
+
+      const finalFileName = name ? encodeURIComponent(name) : filePath.split('/').pop();
+      res.setHeader("Content-Disposition", `attachment; filename="${finalFileName}"`);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+
+      // ফাইল স্ট্রিম করা (Node.js Response formatting)
+      const buffer = await fileResponse.arrayBuffer();
+      return res.status(fileResponse.status).send(Buffer.from(buffer));
+
     } catch (err) {
-      return new Response("Download Error: " + err.message, { status: 500, headers: CORS_HEADERS });
+      return res.status(500).send("Download Error: " + err.message);
     }
   }
 
   // 🎯 ২. টেলিগ্রাম বটের লজিক (POST Request)
-  if (request.method === "POST") {
+  if (req.method === "POST") {
     try {
-      // বডি রিড করার সবচেয়ে নিরাপদ মেথড (যাতে কোড ক্র্যাশ না করে)
-      const bodyText = await request.text();
-      if (!bodyText) {
-        return new Response("Empty body", { status: 200 });
-      }
+      const payload = req.body; // Vercel Node.js রানটাইমে বডি অটোমেটিক পার্স হয়ে যায়
       
-      const payload = JSON.parse(bodyText);
-      const message = payload.message || payload.edited_message;
-      
-      if (message && message.chat) {
-        const chatId = message.chat.id;
-        const userText = message.text ? message.text.trim() : "";
+      if (payload && payload.message && payload.message.chat) {
+        const chatId = payload.message.chat.id;
+        const userText = payload.message.text ? payload.message.text.trim() : "";
 
         if (userText === "/start") {
           await sendMsg(chatId, "👋 হ্যালো! আমি এখন সম্পূর্ণ সচল আছি।\n\nআমাকে যেকোনো ফাইল বা ভিডিও পাঠান, আমি ডাউনলোড লিঙ্ক বানিয়ে দেব!");
         } 
-        else if (message.document || message.video) {
-          const media = message.document || message.video;
+        else if (payload.message.document || payload.message.video) {
+          const media = payload.message.document || payload.message.video;
           const fId = media.file_id;
-          const fName = media.file_name || (message.video ? "video.mp4" : "file");
+          const fName = media.file_name || (payload.message.video ? "video.mp4" : "file");
 
-          // এখানে রুট /api ডিরেক্টরি সেট করা হলো
           const finalDownloadLink = `${currentDomain}/api?file_id=${fId}&name=${encodeURIComponent(fName)}`;
           await sendMsg(chatId, `🚀 ডাউনলোড লিংক রেডি!\n\n📂 ফাইল: ${fName}\n\n🔗 লিংক:\n${finalDownloadLink}`);
         } 
@@ -88,14 +85,15 @@ export default async function handler(request) {
         }
       }
     } catch (e) {
-      console.error("Payload error handled:", e.message);
+      console.error("Payload error:", e.message);
     }
-    
-    // টেলিগ্রামকে সবসময় ২০০ দেব যাতে ৫০০ এরর জেনারেট না হয়
-    return new Response("OK", { status: 200, headers: CORS_HEADERS });
+
+    // টেলিগ্রামকে অবশ্যই ২০০ রেসপন্স দিতে হবে
+    return res.status(200).send("OK");
   }
 
-  return new Response("Server is Running Perfect...", { status: 200, headers: CORS_HEADERS });
+  // নরমাল ব্রাউজার ভিজিট
+  return res.status(200).send("Server is Running Perfect on Node.js Serverless mode...");
 }
 
 async function sendMsg(chatId, text) {
