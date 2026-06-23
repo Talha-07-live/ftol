@@ -1,5 +1,3 @@
-// ⚠️ মনে রাখবেন: এখানে ওপরে কোনো 'runtime: edge' থাকবে না! এটি ডিফল্ট Serverless হিসেবে চলবে।
-
 const BOT_TOKEN = "5941791142:AAFFeBSWyzt5AlnM0yQH6u3bVmyzldyYDRk";
 
 const CORS_HEADERS = {
@@ -11,7 +9,6 @@ const CORS_HEADERS = {
 };
 
 export default async function handler(request) {
-  // OPTIONS রিকোয়েস্ট হ্যান্ডেল করা
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: CORS_HEADERS });
   }
@@ -38,7 +35,7 @@ export default async function handler(request) {
       const forwardHeaders = new Headers();
       const rangeHeader = request.headers.get("range");
       if (rangeHeader) forwardHeaders.set("range", rangeHeader);
-      forwardHeaders.set("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+      forwardHeaders.set("user-agent", "Mozilla/5.0");
 
       const fileResponse = await fetch(telegramDirectLink, { headers: forwardHeaders });
       const responseHeaders = new Headers(CORS_HEADERS);
@@ -61,7 +58,13 @@ export default async function handler(request) {
   // 🎯 ২. টেলিগ্রাম বটের লজিক (POST Request)
   if (request.method === "POST") {
     try {
-      const payload = await request.json();
+      // বডি রিড করার সবচেয়ে নিরাপদ মেথড (যাতে কোড ক্র্যাশ না করে)
+      const bodyText = await request.text();
+      if (!bodyText) {
+        return new Response("Empty body", { status: 200 });
+      }
+      
+      const payload = JSON.parse(bodyText);
       const message = payload.message || payload.edited_message;
       
       if (message && message.chat) {
@@ -76,6 +79,7 @@ export default async function handler(request) {
           const fId = media.file_id;
           const fName = media.file_name || (message.video ? "video.mp4" : "file");
 
+          // এখানে রুট /api ডিরেক্টরি সেট করা হলো
           const finalDownloadLink = `${currentDomain}/api?file_id=${fId}&name=${encodeURIComponent(fName)}`;
           await sendMsg(chatId, `🚀 ডাউনলোড লিংক রেডি!\n\n📂 ফাইল: ${fName}\n\n🔗 লিংক:\n${finalDownloadLink}`);
         } 
@@ -84,13 +88,14 @@ export default async function handler(request) {
         }
       }
     } catch (e) {
-      // ব্যাকএন্ড এরর লগ করা, কিন্তু টেলিগ্রামকে ২০২ দিয়ে পাস করা যাতে লুপ না হয়
-      console.error("Payload error:", e);
+      console.error("Payload error handled:", e.message);
     }
-    return new Response("OK", { status: 200 });
+    
+    // টেলিগ্রামকে সবসময় ২০০ দেব যাতে ৫০০ এরর জেনারেট না হয়
+    return new Response("OK", { status: 200, headers: CORS_HEADERS });
   }
 
-  return new Response("Serveris Running On Serverless Mode...", { status: 200, headers: CORS_HEADERS });
+  return new Response("Server is Running Perfect...", { status: 200, headers: CORS_HEADERS });
 }
 
 async function sendMsg(chatId, text) {
